@@ -6,6 +6,7 @@ import com.pigdad.paganbless.content.blockentities.ImbuingCauldronBlockEntity;
 import com.pigdad.paganbless.utils.Utils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
@@ -13,6 +14,7 @@ import net.minecraft.world.ItemInteractionResult;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BucketItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemUtils;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
@@ -33,6 +35,7 @@ import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import net.neoforged.neoforge.capabilities.Capabilities;
+import net.neoforged.neoforge.common.SoundActions;
 import net.neoforged.neoforge.fluids.FluidStack;
 import net.neoforged.neoforge.fluids.capability.IFluidHandler;
 import net.neoforged.neoforge.fluids.capability.IFluidHandlerItem;
@@ -177,57 +180,56 @@ public class ImbuingCauldronBlock extends BaseEntityBlock {
     private static ItemInteractionResult insertAndExtract(Player player, Level level, InteractionHand interactionHand, IItemHandler itemHandler, FluidTank fluidHandler, IFluidHandler fluidHandlerItem, OptionalInt slot) {
         if (!player.getItemInHand(interactionHand).isEmpty() && fluidHandlerItem == null) {
             insert(player, interactionHand, itemHandler, slot);
+            return ItemInteractionResult.SUCCESS;
         } else if (player.getItemInHand(interactionHand).isEmpty()) {
             extract(player, itemHandler, slot);
+            return ItemInteractionResult.SUCCESS;
         }
 
-        FluidStack fluidInTank = fluidHandler.getFluidInTank(0);
+        return fluidIO(player.getItemInHand(interactionHand), player, interactionHand, fluidHandler, fluidHandlerItem);
+    }
 
-        if (fluidHandlerItem != null && fluidHandlerItem.getFluidInTank(0).getAmount() > 0) {
-            insertFluid(player, level, interactionHand, fluidHandler, fluidHandlerItem);
+    private static ItemInteractionResult fluidIO(ItemStack stack, Player player, InteractionHand hand, IFluidHandler tankFluidHandler, IFluidHandler itemFluidHandler) {
+        if (itemFluidHandler != null && !(stack.getItem() instanceof BucketItem)) {
+            FluidStack fluidInItemTank = itemFluidHandler.getFluidInTank(0);
+            IFluidHandler fluidHandler0 = tankFluidHandler;
+            IFluidHandler fluidHandler1 = itemFluidHandler;
+
+            if (!fluidInItemTank.isEmpty()) {
+                fluidInItemTank.getFluid().getPickupSound().ifPresent(player::playSound);
+                fluidHandler0 = itemFluidHandler;
+                fluidHandler1 = tankFluidHandler;
+            } else {
+                SoundEvent sound = tankFluidHandler.getFluidInTank(0).getFluidType().getSound(SoundActions.BUCKET_EMPTY);
+                if (sound != null) {
+                    player.playSound(sound);
+                }
+            }
+
+            FluidStack drained = fluidHandler0.drain(fluidHandler0.getFluidInTank(0), IFluidHandler.FluidAction.EXECUTE);
+            int filled = fluidHandler1.fill(drained, IFluidHandler.FluidAction.EXECUTE);
+            fluidHandler0.fill(drained.copyWithAmount(drained.getAmount() - filled), IFluidHandler.FluidAction.EXECUTE);
+
             return ItemInteractionResult.SUCCESS;
-        } else {
-            if (fluidHandlerItem != null && fluidHandlerItem.getFluidInTank(0).getAmount() == 0 && !fluidInTank.isEmpty()) {
-                extractFluid(player, level, interactionHand, fluidHandler, fluidHandlerItem, fluidInTank);
+        } else if (itemFluidHandler != null && stack.getItem() instanceof BucketItem) {
+            FluidStack fluidInItemTank = itemFluidHandler.getFluidInTank(0);
+            if (fluidInItemTank.isEmpty() && tankFluidHandler.drain(1000, IFluidHandler.FluidAction.SIMULATE).getAmount() == 1000) {
+                ItemStack filledBucket = ItemUtils.createFilledResult(stack, player, tankFluidHandler.drain(1000, IFluidHandler.FluidAction.EXECUTE).getFluid().getBucket().getDefaultInstance());
+                player.setItemInHand(hand, filledBucket);
+                tankFluidHandler.getFluidInTank(0).getFluid().getPickupSound().ifPresent(player::playSound);
+                return ItemInteractionResult.SUCCESS;
+            } else if (!fluidInItemTank.isEmpty() && tankFluidHandler.fill(fluidInItemTank.copyWithAmount(1000), IFluidHandler.FluidAction.SIMULATE) == 1000) {
+                tankFluidHandler.fill(fluidInItemTank.copyWithAmount(1000), IFluidHandler.FluidAction.EXECUTE);
+                ItemStack emptyBucket = ItemUtils.createFilledResult(stack, player, BucketItem.getEmptySuccessItem(stack, player));
+                player.setItemInHand(hand, emptyBucket);
+                SoundEvent sound = tankFluidHandler.getFluidInTank(0).getFluidType().getSound(SoundActions.BUCKET_EMPTY);
+                if (sound != null) {
+                    player.playSound(sound);
+                }
                 return ItemInteractionResult.SUCCESS;
             }
         }
-
-        return ItemInteractionResult.sidedSuccess(level.isClientSide());
-    }
-
-    private static void insertFluid(Player player, Level level, InteractionHand interactionHand, IFluidHandler fluidHandler, IFluidHandler fluidHandlerItem) {
-        int filled = fluidHandler.fill(fluidHandlerItem.getFluidInTank(0).copy(), IFluidHandler.FluidAction.EXECUTE);
-        fluidHandlerItem.drain(filled, IFluidHandler.FluidAction.EXECUTE);
-        if (player.getItemInHand(interactionHand).getItem() instanceof BucketItem bucketItem) {
-            player.getItemInHand(interactionHand).shrink(1);
-            Utils.giveItemToPlayerNoSound(player, Items.BUCKET.getDefaultInstance(), -1);
-            if (bucketItem.content.isSame(Fluids.WATER)) {
-                level.playSound(null, player.getX(), player.getY() + 0.5, player.getZ(), SoundEvents.BUCKET_EMPTY, SoundSource.PLAYERS, 0.8F, 1.0F);
-            } else if (bucketItem.content.isSame(Fluids.LAVA)) {
-                level.playSound(null, player.getX(), player.getY() + 0.5, player.getZ(), SoundEvents.BUCKET_EMPTY_LAVA, SoundSource.PLAYERS, 0.8F, 1.0F);
-            }
-        }
-    }
-
-    private static void extractFluid(Player player, Level level, InteractionHand interactionHand, FluidTank fluidHandler, IFluidHandler fluidHandlerItem, FluidStack fluidInTank) {
-        if (player.getItemInHand(interactionHand).is(Items.BUCKET)) {
-            player.getItemInHand(interactionHand).shrink(1);
-            Utils.giveItemToPlayerNoSound(player, fluidInTank.getFluid().getBucket().getDefaultInstance(), -1);
-            // FIXME: Better fluid extraction that works with amounts other than 1000
-            if (fluidInTank.is(Fluids.WATER)) {
-                level.playSound(null, player.getX(), player.getY() + 0.5, player.getZ(), SoundEvents.BUCKET_FILL, SoundSource.PLAYERS, 0.8F, 1.0F);
-            } else if (fluidInTank.is(Fluids.LAVA)) {
-                level.playSound(null, player.getX(), player.getY() + 0.5, player.getZ(), SoundEvents.BUCKET_FILL_LAVA, SoundSource.PLAYERS, 0.8F, 1.0F);
-            }
-            fluidHandler.drain(1000, IFluidHandler.FluidAction.EXECUTE);
-        } else {
-            FluidStack fluidStack = fluidHandler.drain(fluidHandler.getFluidInTank(0).getAmount(), IFluidHandler.FluidAction.EXECUTE);
-            int remainderAmount = fluidHandlerItem.fill(fluidStack, IFluidHandler.FluidAction.EXECUTE);
-            FluidStack newFluidStack = fluidStack.copy();
-            newFluidStack.setAmount(remainderAmount);
-            fluidHandler.setFluid(newFluidStack);
-        }
+        return ItemInteractionResult.FAIL;
     }
 
     private static void insert(Player player, InteractionHand interactionHand, IItemHandler itemHandler, OptionalInt slot) {

@@ -116,7 +116,7 @@ public class PBTagProvider {
             tag(BlockTags.LOGS_THAT_BURN,
                     PBBlocks.BLACK_THORN_LOG.get(),
                     PBBlocks.STRIPPED_BLACK_THORN_LOG.get(),
-                    PBBlocks.STRIPPED_BLACK_THORN_LOG.get(),
+                    PBBlocks.ESSENCE_BLACK_THORN_LOG.get(),
                     PBBlocks.BLACK_THORN_WOOD.get(),
                     PBBlocks.STRIPPED_BLACK_THORN_WOOD.get()
             );
